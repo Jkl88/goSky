@@ -1,0 +1,51 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: gosky-postgres-prod
+    restart: unless-stopped
+    environment:
+      TZ: Europe/Moscow
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: gosky
+    volumes:
+      - gosky_postgres_prod_data:/var/lib/postgresql/data
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: gosky-backend-prod
+    restart: unless-stopped
+    depends_on:
+      - postgres
+    env_file:
+      - .env
+    environment:
+      TZ: Europe/Moscow
+      DATABASE_URL: postgresql+psycopg://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/gosky
+      COOKIE_SECURE: ${COOKIE_SECURE:?COOKIE_SECURE required}
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:?FRONTEND_ORIGIN required}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-${FRONTEND_ORIGIN}}
+      OAUTHSKY_INTERNAL_URL: ${OAUTHSKY_INTERNAL_URL:-http://api:8000}
+    networks:
+      - default
+      - oauthsky_internal
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: gosky-frontend-prod
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "127.0.0.1:8083:80"
+
+networks:
+  oauthsky_internal:
+    external: true
+
+volumes:
+  gosky_postgres_prod_data:
