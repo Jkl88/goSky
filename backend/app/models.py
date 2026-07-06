@@ -46,7 +46,7 @@ class ShortLink(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    slug: Mapped[str] = mapped_column(String(6), unique=True, index=True)
+    slug: Mapped[str] = mapped_column(String(12), unique=True, index=True)
     target_url: Mapped[str] = mapped_column(Text)
     title: Mapped[str | None] = mapped_column(String(255), nullable=True)
     is_private: Mapped[bool] = mapped_column(Boolean, default=False, index=True)

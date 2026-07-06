@@ -93,7 +93,7 @@ onMounted(loadAuth);
 
       <v-spacer />
 
-      <v-btn icon variant="text" :title="modeLabel()" @click="cycleMode">
+      <v-btn v-if="authReady && !isAuthed" icon variant="text" :title="modeLabel()" @click="cycleMode">
         <v-icon>{{ modeIcon() }}</v-icon>
       </v-btn>
 
@@ -109,12 +109,12 @@ onMounted(loadAuth);
             <template #activator="{ props }">
               <v-btn v-bind="props" variant="tonal" class="ml-2 mr-2" size="small">
                 <v-icon start>mdi-account-circle</v-icon>
-                <span v-if="!mobile">{{ user?.login }}</span>
+                {{ user?.login }}
               </v-btn>
             </template>
             <v-list density="compact">
-              <v-list-item v-if="mobile" prepend-icon="mdi-link-multiple" title="Мои ссылки" @click="navTo('/links')" />
               <v-list-item prepend-icon="mdi-devices" title="Активные сеансы" @click="navTo('/sessions')" />
+              <v-list-item :prepend-icon="modeIcon()" :title="modeLabel()" @click="cycleMode" />
               <v-list-item prepend-icon="mdi-logout" title="Выйти" @click="onLogout" />
             </v-list>
           </v-menu>
@@ -134,12 +134,6 @@ onMounted(loadAuth);
           prepend-icon="mdi-link-multiple"
           title="Мои ссылки"
           @click="navTo('/links')"
-        />
-        <v-list-item
-          v-if="isAuthed"
-          prepend-icon="mdi-devices"
-          title="Активные сеансы"
-          @click="navTo('/sessions')"
         />
       </v-list>
     </v-navigation-drawer>

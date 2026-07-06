@@ -17,8 +17,9 @@ from ..schemas import (
     ShortLinkOut,
     ShortLinkUpdateIn,
     ShortLinkViewOut,
+    SlugCheckOut,
 )
-from ..slug import generate_random_slug, is_valid_slug
+from ..slug import custom_slug_error, generate_random_slug, is_valid_custom_slug, is_valid_slug
 
 router = APIRouter(prefix="/api/links", tags=["links"])
 
@@ -94,6 +95,22 @@ def list_my_links(
     return [_to_out(link) for link in links]
 
 
+@router.get("/check-slug/{slug}", response_model=SlugCheckOut)
+def check_slug_available(
+    slug: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    del current_user
+    reason = custom_slug_error(slug.strip())
+    if reason:
+        return SlugCheckOut(available=False, reason=reason)
+    exists = db.query(ShortLink.id).filter(ShortLink.slug == slug.strip()).first()
+    if exists:
+        return SlugCheckOut(available=False, reason="Такой код уже занят")
+    return SlugCheckOut(available=True)
+
+
 @router.post("", response_model=ShortLinkOut, status_code=status.HTTP_201_CREATED)
 def create_link(
     payload: ShortLinkCreateIn,
@@ -103,6 +120,32 @@ def create_link(
     expires_at = _resolve_expires_at(payload.expires_at, payload.ttl_hours)
     if expires_at is not None and expires_at <= datetime.utcnow():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Срок действия должен быть в будущем.")
+
+    if payload.slug:
+        slug = payload.slug
+        reason = custom_slug_error(slug)
+        if reason:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=reason)
+        existing = db.query(ShortLink.id).filter(ShortLink.slug == slug).first()
+        if existing:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Такой код уже занят")
+        link = ShortLink(
+            user_id=current_user.id,
+            slug=slug,
+            target_url=payload.target_url,
+            title=payload.title,
+            is_private=payload.is_private,
+            expires_at=expires_at,
+            max_clicks=payload.max_clicks,
+        )
+        db.add(link)
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Такой код уже занят") from None
+        db.refresh(link)
+        return _to_out(link)
 
     for _ in range(32):
         slug = generate_random_slug()

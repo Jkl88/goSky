@@ -63,6 +63,11 @@ export type LinkStats = {
   clicks: LinkClickRecord[];
 };
 
+export type SlugCheckResult = {
+  available: boolean;
+  reason: string | null;
+};
+
 export type OAuthSkyConfig = {
   enabled: boolean;
   portal_url: string;
@@ -193,11 +198,16 @@ export async function listLinks(): Promise<ShortLink[]> {
 export async function createLink(data: {
   target_url: string;
   title?: string | null;
+  slug?: string | null;
   is_private: boolean;
   ttl_hours?: number | null;
   max_clicks?: number | null;
 }): Promise<ShortLink> {
   return api<ShortLink>('/api/links', { method: 'POST', body: JSON.stringify(data) });
+}
+
+export async function checkSlugAvailable(slug: string): Promise<SlugCheckResult> {
+  return api<SlugCheckResult>(`/api/links/check-slug/${encodeURIComponent(slug.trim())}`);
 }
 
 export async function updateLink(
@@ -247,11 +257,19 @@ export function formatDateTime(iso: string | null): string {
   return date.toLocaleString('ru-RU');
 }
 
-export const SLUG_PATTERN = /^[A-Za-z0-9$@!%#]{1,6}$/;
+export const SLUG_PATTERN = /^[A-Za-z0-9$@!%#]{1,12}$/;
+export const CUSTOM_SLUG_PATTERN = /^[A-Za-z0-9$@!%#]{3,12}$/;
 
 export function validateSlug(slug: string): string | null {
   if (!SLUG_PATTERN.test(slug)) {
-    return '1–6 символов: цифры, латиница и $ @ ! % #';
+    return '1–12 символов: цифры, латиница и $ @ ! % #';
+  }
+  return null;
+}
+
+export function validateCustomSlug(slug: string): string | null {
+  if (!CUSTOM_SLUG_PATTERN.test(slug)) {
+    return '3–12 символов: цифры, латиница и $ @ ! % #';
   }
   return null;
 }

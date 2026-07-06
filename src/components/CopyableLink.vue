@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue';
+import { openExternalUrl } from '@/composables/openExternalUrl';
 import { copyToClipboard } from '@/services/api';
 
 const props = withDefaults(
@@ -19,6 +20,11 @@ async function onCopy(e: Event) {
   const ok = await copyToClipboard(props.url);
   if (ok) snack.value = true;
 }
+
+function onLinkClick(e: MouseEvent) {
+  e.preventDefault();
+  openExternalUrl(props.url);
+}
 </script>
 
 <template>
@@ -32,6 +38,7 @@ async function onCopy(e: Event) {
           class="text-primary text-body-2 text-break flex-grow-1 text-decoration-none link-open"
           target="_blank"
           rel="noopener noreferrer"
+          @click="onLinkClick"
         >
           {{ url }}
         </a>

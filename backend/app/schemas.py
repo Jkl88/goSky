@@ -3,6 +3,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, PlainSerializer, field_validator
 
+from .slug import is_valid_custom_slug
 from .target_url import normalize_target_url
 
 
@@ -83,9 +84,15 @@ class ShortLinkOut(OrmUtcJsonModel):
     view_url: str = ""
 
 
+class SlugCheckOut(BaseModel):
+    available: bool
+    reason: str | None = None
+
+
 class ShortLinkCreateIn(BaseModel):
     target_url: str = Field(min_length=1, max_length=2048)
     title: str | None = Field(default=None, max_length=255)
+    slug: str | None = Field(default=None, min_length=3, max_length=12)
     is_private: bool = False
     expires_at: datetime | None = None
     max_clicks: int | None = Field(default=None, ge=1, le=1_000_000)
@@ -95,6 +102,18 @@ class ShortLinkCreateIn(BaseModel):
     @classmethod
     def validate_target_url(cls, value: str) -> str:
         return normalize_target_url(value)
+
+    @field_validator("slug")
+    @classmethod
+    def validate_slug(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        trimmed = value.strip()
+        if not trimmed:
+            return None
+        if not is_valid_custom_slug(trimmed):
+            raise ValueError("Код: 3–12 символов, цифры, латиница и $ @ ! % #")
+        return trimmed
 
 
 class ShortLinkUpdateIn(BaseModel):
