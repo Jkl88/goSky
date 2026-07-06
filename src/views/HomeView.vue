@@ -24,6 +24,8 @@ const router = useRouter();
 const targetUrl = ref('');
 const title = ref('');
 const isPrivate = ref(false);
+const hideTargetUrl = ref(false);
+const redirectPassword = ref('');
 const ttlPreset = ref<string>('none');
 const customTtlHours = ref<number | null>(null);
 const maxClicks = ref<number | null>(null);
@@ -128,6 +130,10 @@ async function onSubmit() {
       return;
     }
   }
+  if (!isPrivate.value && redirectPassword.value && redirectPassword.value.length < 4) {
+    error.value = 'Пароль редиректа — минимум 4 символа';
+    return;
+  }
 
   loading.value = true;
   try {
@@ -136,6 +142,8 @@ async function onSubmit() {
       title: title.value.trim() || null,
       slug: useCustomSlug.value ? customSlug.value.trim() : null,
       is_private: isPrivate.value,
+      hide_target_url: hideTargetUrl.value,
+      redirect_password: !isPrivate.value && redirectPassword.value ? redirectPassword.value : null,
       ttl_hours: resolveTtlHours(),
       max_clicks: maxClicks.value && maxClicks.value > 0 ? maxClicks.value : null,
     });
@@ -152,6 +160,8 @@ function resetForm() {
   targetUrl.value = '';
   title.value = '';
   isPrivate.value = false;
+  hideTargetUrl.value = false;
+  redirectPassword.value = '';
   ttlPreset.value = 'none';
   customTtlHours.value = null;
   maxClicks.value = null;
@@ -305,12 +315,36 @@ onMounted(applyShareParams);
         />
 
         <v-switch
+          v-model="hideTargetUrl"
+          color="primary"
+          label="Скрыть оригинал ссылки"
+          hint="В просмотре для гостей будет виден только домен: https://example.com/********"
+          persistent-hint
+          hide-details
+          class="mb-2"
+        />
+
+        <v-switch
           v-model="isPrivate"
           color="primary"
           label="Приватная — только для меня (нужна авторизация)"
           hide-details
-          class="mb-4"
+          class="mb-2"
         />
+
+        <template v-if="!isPrivate">
+          <v-text-field
+            v-model="redirectPassword"
+            type="password"
+            label="Пароль для перехода (необязательно)"
+            hint="Только для публичных ссылок — гость введёт пароль перед редиректом"
+            persistent-hint
+            autocomplete="new-password"
+            variant="outlined"
+            density="comfortable"
+            class="mb-4"
+          />
+        </template>
 
         <v-alert v-if="error" type="error" variant="tonal" class="mb-4" rounded="lg">{{ error }}</v-alert>
 

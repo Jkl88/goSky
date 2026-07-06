@@ -2,13 +2,16 @@
 import { computed, onMounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import CopyableLink from '@/components/CopyableLink.vue';
+import LinkActivityChart from '@/components/LinkActivityChart.vue';
 import LinkStatsPanel from '@/components/LinkStatsPanel.vue';
 import QrBlock from '@/components/QrBlock.vue';
 import {
   deleteLink,
   fetchLinkStats,
   formatDateTime,
+  getLinkPasswordPageUrl,
   getOAuthSkyStartUrl,
+  isPasswordRequiredError,
   updateLink,
   viewLink,
   type LinkStats,
@@ -36,6 +39,9 @@ const editTarget = ref('');
 const editTitle = ref('');
 const editPrivate = ref(false);
 const editEnabled = ref(true);
+const editHideTargetUrl = ref(false);
+const editRedirectPassword = ref('');
+const clearRedirectPassword = ref(false);
 const ttlPreset = ref('keep');
 const customTtlHours = ref<number | null>(null);
 const maxClicks = ref<number | null>(null);
@@ -60,6 +66,9 @@ async function load() {
     editTitle.value = data.value.title || '';
     editPrivate.value = data.value.is_private;
     editEnabled.value = data.value.is_enabled;
+    editHideTargetUrl.value = data.value.hide_target_url;
+    editRedirectPassword.value = '';
+    clearRedirectPassword.value = false;
     maxClicks.value = data.value.max_clicks;
     ttlPreset.value = 'keep';
 
@@ -72,7 +81,11 @@ async function load() {
     }
   } catch (e) {
     const msg = e instanceof Error ? e.message : 'Ошибка';
-    if (msg.includes('авторизац') || msg.includes('401')) {
+    if (isPasswordRequiredError(msg)) {
+      window.location.href = getLinkPasswordPageUrl(slug.value);
+      return;
+    }
+    if (msg.includes('авторизац') || (msg.includes('401') && !msg.includes('парол'))) {
       const returnTo = encodeURIComponent(route.fullPath);
       window.location.href = getOAuthSkyStartUrl(returnTo);
       return;
@@ -89,6 +102,7 @@ function buildUpdatePayload() {
     title: editTitle.value || null,
     is_private: editPrivate.value,
     is_enabled: editEnabled.value,
+    hide_target_url: editHideTargetUrl.value,
   };
 
   if (ttlPreset.value === 'clear') {
@@ -105,6 +119,17 @@ function buildUpdatePayload() {
     payload.clear_max_clicks = true;
   }
 
+  if (!editPrivate.value) {
+    if (clearRedirectPassword.value) {
+      payload.clear_redirect_password = true;
+    } else if (editRedirectPassword.value) {
+      if (editRedirectPassword.value.length < 4) {
+        throw new Error('Пароль редиректа — минимум 4 символа');
+      }
+      payload.redirect_password = editRedirectPassword.value;
+    }
+  }
+
   return payload;
 }
 
@@ -113,7 +138,8 @@ async function save() {
   saving.value = true;
   error.value = '';
   try {
-    await updateLink(slug.value, buildUpdatePayload());
+    const payload = buildUpdatePayload();
+    await updateLink(slug.value, payload);
     await load();
   } catch (e) {
     error.value = e instanceof Error ? e.message : 'Ошибка сохранения';
@@ -138,6 +164,12 @@ async function confirmDelete() {
 
 onMounted(load);
 watch(slug, load);
+watch(editPrivate, (isPrivate) => {
+  if (isPrivate) {
+    editRedirectPassword.value = '';
+    clearRedirectPassword.value = false;
+  }
+});
 </script>
 
 <template>
@@ -157,6 +189,12 @@ watch(slug, load);
       </div>
       <div class="text-caption text-medium-emphasis mb-2">
         {{ data.click_count }} переходов · {{ data.is_private ? 'Приватная' : 'Публичная' }}
+        <v-chip v-if="data.has_redirect_password" size="x-small" color="secondary" variant="tonal" class="ml-1">
+          С паролем
+        </v-chip>
+        <v-chip v-if="data.hide_target_url" size="x-small" color="info" variant="tonal" class="ml-1">
+          Оригинал скрыт
+        </v-chip>
         <span v-if="data.max_clicks"> · лимит {{ data.max_clicks }}</span>
         <span v-if="data.expires_at"> · до {{ formatDateTime(data.expires_at) }}</span>
       </div>
@@ -168,9 +206,14 @@ watch(slug, load);
       <v-card rounded="xl" class="pa-4 mb-4">
         <QrBlock :value="data.short_url" />
         <CopyableLink label="Сокращённая" :url="data.short_url" />
-        <CopyableLink label="Оригинальная" :url="data.target_url" />
+        <CopyableLink
+          label="Оригинальная"
+          :url="data.target_url"
+          :as-link="data.is_owner || !data.hide_target_url"
+        />
       </v-card>
 
+      <LinkActivityChart v-if="data.is_owner" :slug="slug" />
       <LinkStatsPanel v-if="stats" :stats="stats" />
 
       <v-card v-if="data.can_edit" rounded="xl" class="pa-4">
@@ -231,12 +274,52 @@ watch(slug, load);
           class="mb-2"
         />
         <v-switch
+          v-model="editHideTargetUrl"
+          color="primary"
+          label="Скрыть оригинал ссылки"
+          hint="Гости увидят только домен: https://example.com/********"
+          persistent-hint
+          hide-details
+          class="mb-2"
+        />
+        <v-switch
           v-model="editPrivate"
           color="primary"
           label="Приватная ссылка"
           hide-details
-          class="mb-4"
+          class="mb-2"
         />
+        <template v-if="!editPrivate">
+          <v-alert
+            v-if="data.has_redirect_password"
+            type="info"
+            variant="tonal"
+            density="compact"
+            rounded="lg"
+            class="mb-2"
+          >
+            Пароль для перехода установлен
+          </v-alert>
+          <v-text-field
+            v-model="editRedirectPassword"
+            type="password"
+            label="Новый пароль для перехода"
+            hint="Оставьте пустым, чтобы не менять"
+            persistent-hint
+            autocomplete="new-password"
+            variant="outlined"
+            density="comfortable"
+            class="mb-2"
+          />
+          <v-switch
+            v-if="data.has_redirect_password"
+            v-model="clearRedirectPassword"
+            color="warning"
+            label="Снять пароль"
+            hide-details
+            class="mb-4"
+          />
+        </template>
         <v-alert v-if="error" type="error" variant="tonal" class="mb-3" rounded="lg">{{ error }}</v-alert>
         <div class="d-flex gap-2">
           <v-btn color="primary" class="flex-grow-1" :loading="saving" rounded="lg" @click="save">Сохранить</v-btn>

@@ -51,6 +51,10 @@ function openView(link: ShortLink) {
   router.push(`/${link.slug}/vq`);
 }
 
+function hasLimits(link: ShortLink): boolean {
+  return link.expires_at != null || link.max_clicks != null;
+}
+
 onMounted(load);
 watch(() => props.user, load);
 </script>
@@ -90,7 +94,7 @@ watch(() => props.user, load);
         <v-list-item>
           <template #prepend>
             <v-avatar color="primary" variant="tonal" size="40">
-              <v-icon>{{ link.is_private ? 'mdi-lock' : 'mdi-earth' }}</v-icon>
+              <v-icon>mdi-link-variant</v-icon>
             </v-avatar>
           </template>
           <v-list-item-title class="font-weight-medium">
@@ -99,6 +103,28 @@ watch(() => props.user, load);
           <v-list-item-subtitle class="text-truncate">
             {{ link.short_url }}
           </v-list-item-subtitle>
+          <div class="d-flex align-center gap-1 mt-1 link-flags" @click.stop>
+            <v-tooltip v-if="link.has_redirect_password" text="Пароль на переход" location="bottom">
+              <template #activator="{ props: tip }">
+                <v-icon v-bind="tip" size="18" color="secondary">mdi-lock</v-icon>
+              </template>
+            </v-tooltip>
+            <v-tooltip v-if="link.hide_target_url" text="Оригинал скрыт" location="bottom">
+              <template #activator="{ props: tip }">
+                <v-icon v-bind="tip" size="18" color="info">mdi-eye-off-outline</v-icon>
+              </template>
+            </v-tooltip>
+            <v-tooltip v-if="link.is_private" text="Приватная ссылка" location="bottom">
+              <template #activator="{ props: tip }">
+                <v-icon v-bind="tip" size="18" color="primary">mdi-account</v-icon>
+              </template>
+            </v-tooltip>
+            <v-tooltip v-if="hasLimits(link)" text="Есть лимиты (срок или переходы)" location="bottom">
+              <template #activator="{ props: tip }">
+                <v-icon v-bind="tip" size="18" color="warning">mdi-gauge</v-icon>
+              </template>
+            </v-tooltip>
+          </div>
           <template #append>
             <div class="d-flex align-center" @click.stop>
               <v-chip v-if="!link.is_active" color="warning" size="x-small" variant="flat" class="mr-1">
@@ -131,3 +157,9 @@ watch(() => props.user, load);
     </v-dialog>
   </div>
 </template>
+
+<style scoped>
+.link-flags {
+  min-height: 22px;
+}
+</style>

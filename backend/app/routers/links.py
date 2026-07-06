@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from fastapi.responses import RedirectResponse
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -8,10 +9,14 @@ from sqlalchemy.orm import Session
 from ..config import settings
 from ..database import get_db
 from ..deps import get_current_user, get_optional_user
+from ..link_activity import build_link_activity
 from ..link_logic import device_label, inactive_reason, is_link_active
 from ..models import LinkClick, ShortLink, User
 from ..schemas import (
+    ActivityPointOut,
+    LinkActivityOut,
     LinkClickOut,
+    LinkPasswordUnlockIn,
     LinkStatsOut,
     ShortLinkCreateIn,
     ShortLinkOut,
@@ -19,7 +24,11 @@ from ..schemas import (
     ShortLinkViewOut,
     SlugCheckOut,
 )
+from ..password_page import build_password_html_response
+from ..redirect_password import is_redirect_unlocked, set_redirect_unlock_cookie
+from ..security import hash_password, verify_password
 from ..slug import custom_slug_error, generate_random_slug, is_valid_custom_slug, is_valid_slug
+from ..target_url import mask_target_url
 
 router = APIRouter(prefix="/api/links", tags=["links"])
 
@@ -39,6 +48,10 @@ def _resolve_expires_at(payload_expires_at: datetime | None, ttl_hours: int | No
     return None
 
 
+def _has_redirect_password(link: ShortLink) -> bool:
+    return bool(link.redirect_password_hash)
+
+
 def _to_out(link: ShortLink) -> ShortLinkOut:
     short_url, view_url = _link_urls(link.slug)
     active = is_link_active(link)
@@ -49,6 +62,8 @@ def _to_out(link: ShortLink) -> ShortLinkOut:
         title=link.title,
         is_private=link.is_private,
         is_enabled=link.is_enabled,
+        has_redirect_password=_has_redirect_password(link),
+        hide_target_url=link.hide_target_url,
         click_count=link.click_count,
         expires_at=link.expires_at,
         max_clicks=link.max_clicks,
@@ -120,6 +135,15 @@ def create_link(
     expires_at = _resolve_expires_at(payload.expires_at, payload.ttl_hours)
     if expires_at is not None and expires_at <= datetime.utcnow():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Срок действия должен быть в будущем.")
+    if payload.is_private and payload.redirect_password:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Пароль редиректа доступен только для публичных ссылок.",
+        )
+
+    redirect_password_hash = None
+    if not payload.is_private and payload.redirect_password:
+        redirect_password_hash = hash_password(payload.redirect_password)
 
     if payload.slug:
         slug = payload.slug
@@ -135,8 +159,10 @@ def create_link(
             target_url=payload.target_url,
             title=payload.title,
             is_private=payload.is_private,
+            hide_target_url=payload.hide_target_url,
             expires_at=expires_at,
             max_clicks=payload.max_clicks,
+            redirect_password_hash=redirect_password_hash,
         )
         db.add(link)
         try:
@@ -157,8 +183,10 @@ def create_link(
             target_url=payload.target_url,
             title=payload.title,
             is_private=payload.is_private,
+            hide_target_url=payload.hide_target_url,
             expires_at=expires_at,
             max_clicks=payload.max_clicks,
+            redirect_password_hash=redirect_password_hash,
         )
         db.add(link)
         try:
@@ -226,9 +254,72 @@ def link_stats(
     )
 
 
+@router.get("/{slug}/activity", response_model=LinkActivityOut)
+def link_activity(
+    slug: str,
+    mode: str = Query(default="day", pattern="^(day|month)$"),
+    date: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    link = _get_owned_link(db, slug, current_user)
+    try:
+        payload = build_link_activity(db, link, mode=mode, date_value=date)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Некорректная дата.") from exc
+    return LinkActivityOut(
+        mode=payload["mode"],
+        date=payload["date"],
+        range_label=payload["range_label"],
+        total=payload["total"],
+        points=[ActivityPointOut(**point) for point in payload["points"]],
+    )
+
+
+def _safe_return_path(value: str | None) -> str | None:
+    if not value:
+        return None
+    path = value.strip()
+    if not path.startswith("/") or path.startswith("//"):
+        return None
+    return path
+
+
+@router.get("/{slug}/password-page")
+def link_password_page(
+    slug: str,
+    request: Request,
+    error: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+    user: User | None = Depends(get_optional_user),
+):
+    if not is_valid_slug(slug):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ссылка не найдена.")
+    link = db.query(ShortLink).filter(ShortLink.slug == slug).first()
+    if not link:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ссылка не найдена.")
+
+    _check_link_access(link, user)
+    front = settings.frontend_public_origin.rstrip("/")
+    view_path = f"/{link.slug}/vq"
+    is_owner = user is not None and link.user_id == user.id
+    if is_owner or not link.redirect_password_hash or is_redirect_unlocked(link, request):
+        return RedirectResponse(url=f"{front}{view_path}", status_code=status.HTTP_302_FOUND)
+
+    return build_password_html_response(
+        link,
+        request,
+        context="view",
+        form_action=f"/api/links/{link.slug}/unlock",
+        error=error,
+        hidden_fields={"return_to": view_path},
+    )
+
+
 @router.get("/{slug}/view", response_model=ShortLinkViewOut)
 def view_link(
     slug: str,
+    request: Request,
     db: Session = Depends(get_db),
     user: User | None = Depends(get_optional_user),
 ):
@@ -241,13 +332,20 @@ def view_link(
     _check_link_access(link, user)
     short_url, view_url = _link_urls(link.slug)
     is_owner = user is not None and link.user_id == user.id
+    if link.redirect_password_hash and not is_owner and not is_redirect_unlocked(link, request):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="password_required")
     active = is_link_active(link)
+    display_target = link.target_url
+    if link.hide_target_url and not is_owner:
+        display_target = mask_target_url(link.target_url)
     return ShortLinkViewOut(
         slug=link.slug,
-        target_url=link.target_url,
+        target_url=display_target,
         title=link.title,
         is_private=link.is_private,
         is_enabled=link.is_enabled,
+        has_redirect_password=_has_redirect_password(link),
+        hide_target_url=link.hide_target_url,
         click_count=link.click_count,
         expires_at=link.expires_at,
         max_clicks=link.max_clicks,
@@ -258,6 +356,58 @@ def view_link(
         is_owner=is_owner,
         can_edit=is_owner,
     )
+
+
+@router.post("/{slug}/unlock", status_code=status.HTTP_204_NO_CONTENT)
+async def unlock_link_view(
+    slug: str,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db),
+    user: User | None = Depends(get_optional_user),
+):
+    if not is_valid_slug(slug):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ссылка не найдена.")
+    link = db.query(ShortLink).filter(ShortLink.slug == slug).first()
+    if not link:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ссылка не найдена.")
+
+    _check_link_access(link, user)
+    is_owner = user is not None and link.user_id == user.id
+    if is_owner or not link.redirect_password_hash:
+        return None
+    if is_redirect_unlocked(link, request):
+        return None
+
+    content_type = (request.headers.get("content-type") or "").lower()
+    return_to = None
+    if "application/json" in content_type:
+        payload = LinkPasswordUnlockIn.model_validate(await request.json())
+        password = payload.password
+    else:
+        form = await request.form()
+        password = str(form.get("password") or "")
+        return_to = _safe_return_path(str(form.get("return_to") or "") or None)
+
+    if not password or not verify_password(password, link.redirect_password_hash):
+        if return_to:
+            from urllib.parse import quote
+
+            err = quote("Неверный пароль. Попробуйте ещё раз.")
+            return RedirectResponse(
+                url=f"/api/links/{slug}/password-page?error={err}",
+                status_code=status.HTTP_303_SEE_OTHER,
+            )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Неверный пароль.")
+
+    if return_to:
+        front = settings.frontend_public_origin.rstrip("/")
+        redirect = RedirectResponse(url=f"{front}{return_to}", status_code=status.HTTP_303_SEE_OTHER)
+        set_redirect_unlock_cookie(redirect, link)
+        return redirect
+
+    set_redirect_unlock_cookie(response, link)
+    return None
 
 
 @router.get("/{slug}", response_model=ShortLinkOut)
@@ -285,8 +435,22 @@ def update_link(
         link.title = payload.title or None
     if payload.is_private is not None:
         link.is_private = payload.is_private
+        if payload.is_private:
+            link.redirect_password_hash = None
     if payload.is_enabled is not None:
         link.is_enabled = payload.is_enabled
+    if payload.hide_target_url is not None:
+        link.hide_target_url = payload.hide_target_url
+
+    if payload.clear_redirect_password:
+        link.redirect_password_hash = None
+    elif payload.redirect_password:
+        if link.is_private:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Пароль редиректа доступен только для публичных ссылок.",
+            )
+        link.redirect_password_hash = hash_password(payload.redirect_password)
 
     if payload.clear_expires_at:
         link.expires_at = None

@@ -14,6 +14,8 @@ export type ShortLink = {
   title: string | null;
   is_private: boolean;
   is_enabled: boolean;
+  has_redirect_password: boolean;
+  hide_target_url: boolean;
   click_count: number;
   expires_at: string | null;
   max_clicks: number | null;
@@ -31,6 +33,8 @@ export type ShortLinkView = {
   title: string | null;
   is_private: boolean;
   is_enabled: boolean;
+  has_redirect_password: boolean;
+  hide_target_url: boolean;
   click_count: number;
   expires_at: string | null;
   max_clicks: number | null;
@@ -61,6 +65,20 @@ export type LinkStats = {
   max_clicks: number | null;
   device_breakdown: Record<string, number>;
   clicks: LinkClickRecord[];
+};
+
+export type LinkActivityPoint = {
+  hour: number;
+  label: string;
+  count: number;
+};
+
+export type LinkActivity = {
+  mode: 'day' | 'month';
+  date: string;
+  range_label: string;
+  total: number;
+  points: LinkActivityPoint[];
 };
 
 export type SlugCheckResult = {
@@ -200,6 +218,8 @@ export async function createLink(data: {
   title?: string | null;
   slug?: string | null;
   is_private: boolean;
+  redirect_password?: string | null;
+  hide_target_url?: boolean;
   ttl_hours?: number | null;
   max_clicks?: number | null;
 }): Promise<ShortLink> {
@@ -217,6 +237,9 @@ export async function updateLink(
     title?: string | null;
     is_private?: boolean;
     is_enabled?: boolean;
+    hide_target_url?: boolean;
+    redirect_password?: string | null;
+    clear_redirect_password?: boolean;
     ttl_hours?: number | null;
     max_clicks?: number | null;
     clear_expires_at?: boolean;
@@ -233,12 +256,36 @@ export async function deleteLink(slug: string): Promise<void> {
   await api(`/api/links/${encodeURIComponent(slug)}`, { method: 'DELETE' });
 }
 
+export function getLinkPasswordPageUrl(slug: string): string {
+  return apiUrl(`/api/links/${encodeURIComponent(slug)}/password-page`);
+}
+
 export async function viewLink(slug: string): Promise<ShortLinkView> {
   return api<ShortLinkView>(`/api/links/${encodeURIComponent(slug)}/view`, {}, false);
 }
 
+export async function unlockLinkPassword(slug: string, password: string): Promise<void> {
+  await api(`/api/links/${encodeURIComponent(slug)}/unlock`, {
+    method: 'POST',
+    body: JSON.stringify({ password }),
+  }, false);
+}
+
+export function isPasswordRequiredError(message: string): boolean {
+  return message === 'password_required';
+}
+
 export async function fetchLinkStats(slug: string): Promise<LinkStats> {
   return api<LinkStats>(`/api/links/${encodeURIComponent(slug)}/stats`);
+}
+
+export async function fetchLinkActivity(
+  slug: string,
+  params: { mode: 'day' | 'month'; date?: string },
+): Promise<LinkActivity> {
+  const query = new URLSearchParams({ mode: params.mode });
+  if (params.date) query.set('date', params.date);
+  return api<LinkActivity>(`/api/links/${encodeURIComponent(slug)}/activity?${query.toString()}`);
 }
 
 export function parseApiDateTime(iso: string): Date {

@@ -51,9 +51,11 @@ class ShortLink(Base):
     title: Mapped[str | None] = mapped_column(String(255), nullable=True)
     is_private: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    hide_target_url: Mapped[bool] = mapped_column(Boolean, default=False)
     click_count: Mapped[int] = mapped_column(Integer, default=0)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
     max_clicks: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    redirect_password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 

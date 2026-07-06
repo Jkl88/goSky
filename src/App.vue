@@ -102,9 +102,6 @@ onMounted(loadAuth);
           <v-btn v-if="!mobile" variant="text" to="/links" prepend-icon="mdi-link-multiple">
             Мои ссылки
           </v-btn>
-          <v-btn v-if="!mobile" variant="text" to="/sessions" prepend-icon="mdi-devices">
-            Сеансы
-          </v-btn>
           <v-menu>
             <template #activator="{ props }">
               <v-btn v-bind="props" variant="tonal" class="ml-2 mr-2" size="small">

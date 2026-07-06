@@ -35,3 +35,28 @@ def normalize_target_url(value: str) -> str:
         raise ValueError("URL слишком короткий.")
 
     return raw
+
+
+def mask_target_url(value: str) -> str:
+    """Скрывает путь и параметры, оставляя только схему и домен."""
+    raw = (value or "").strip()
+    if not raw:
+        return "********"
+
+    parsed = urlsplit(raw)
+    scheme = (parsed.scheme or "").lower()
+
+    if scheme in ("http", "https", "ftp") and parsed.netloc:
+        return f"{parsed.scheme}://{parsed.netloc}/********"
+
+    if scheme == "mailto":
+        addr = raw.split(":", 1)[1] if ":" in raw else raw
+        if "@" in addr:
+            host = addr.rsplit("@", 1)[1]
+            return f"mailto:********@{host}"
+        return "mailto:********"
+
+    if scheme:
+        return f"{parsed.scheme or scheme}://********"
+
+    return "********"

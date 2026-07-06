@@ -4,7 +4,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, PlainSerializer, field_validator
 
 from .slug import is_valid_custom_slug
-from .target_url import normalize_target_url
+from .target_url import mask_target_url, normalize_target_url
 
 
 def serialize_utc_datetime(value: datetime | None) -> str | None:
@@ -66,6 +66,10 @@ class QrLoginConsumeIn(BaseModel):
     token: str = Field(min_length=1)
 
 
+class LinkPasswordUnlockIn(BaseModel):
+    password: str = Field(min_length=1, max_length=128)
+
+
 class ShortLinkOut(OrmUtcJsonModel):
     id: int
     slug: str
@@ -73,6 +77,8 @@ class ShortLinkOut(OrmUtcJsonModel):
     title: str | None = None
     is_private: bool
     is_enabled: bool = True
+    has_redirect_password: bool = False
+    hide_target_url: bool = False
     click_count: int
     expires_at: OptionalUtcDatetime = None
     max_clicks: int | None = None
@@ -94,6 +100,8 @@ class ShortLinkCreateIn(BaseModel):
     title: str | None = Field(default=None, max_length=255)
     slug: str | None = Field(default=None, min_length=3, max_length=12)
     is_private: bool = False
+    hide_target_url: bool = False
+    redirect_password: str | None = Field(default=None, min_length=4, max_length=128)
     expires_at: datetime | None = None
     max_clicks: int | None = Field(default=None, ge=1, le=1_000_000)
     ttl_hours: int | None = Field(default=None, ge=1, le=8760)
@@ -121,6 +129,9 @@ class ShortLinkUpdateIn(BaseModel):
     title: str | None = Field(default=None, max_length=255)
     is_private: bool | None = None
     is_enabled: bool | None = None
+    hide_target_url: bool | None = None
+    redirect_password: str | None = Field(default=None, min_length=4, max_length=128)
+    clear_redirect_password: bool = False
     expires_at: datetime | None = None
     max_clicks: int | None = Field(default=None, ge=1, le=1_000_000)
     clear_expires_at: bool = False
@@ -141,6 +152,8 @@ class ShortLinkViewOut(BaseModel):
     title: str | None = None
     is_private: bool
     is_enabled: bool = True
+    has_redirect_password: bool = False
+    hide_target_url: bool = False
     click_count: int
     expires_at: OptionalUtcDatetime = None
     max_clicks: int | None = None
@@ -171,3 +184,17 @@ class LinkStatsOut(BaseModel):
     max_clicks: int | None = None
     device_breakdown: dict[str, int]
     clicks: list[LinkClickOut]
+
+
+class ActivityPointOut(BaseModel):
+    hour: int
+    label: str
+    count: int
+
+
+class LinkActivityOut(BaseModel):
+    mode: Literal["day", "month"]
+    date: str
+    range_label: str
+    total: int
+    points: list[ActivityPointOut]
